@@ -1,6 +1,6 @@
-# Maternal Health Risk Prediction Model
+![amphilus_git](https://github.com/user-attachments/assets/f85637cf-0478-4c52-bdd3-90455e815b83)
 
-![amphilus_git](https://github.com/user-attachments/assets/d7220cb3-c253-4cbc-93bb-8d92bffb5edd)
+# Maternal Health Risk Prediction Model
 
 This repository contains a Python script that builds and trains an AI model to predict maternal health risk levels (high risk, mid risk, low risk) using an XGBoost classifier. The model utilizes a dataset with features such as Age, SystolicBP, DiastolicBP, BS (Blood Sugar), BodyTemp, and HeartRate, and provides visualizations to understand the model's performance and data distribution.
 
