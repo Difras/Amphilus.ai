@@ -4,6 +4,60 @@
 
 This repository contains a Python script that builds and trains an AI model to predict maternal health risk levels (high risk, mid risk, low risk) using an XGBoost classifier. The model utilizes a dataset with features such as Age, SystolicBP, DiastolicBP, BS (Blood Sugar), BodyTemp, and HeartRate, and provides visualizations to understand the model's performance and data distribution.
 
+## Code Workflow
+
+The following flowchart illustrates the complete machine learning pipeline used in this project:
+
+```mermaid
+flowchart TD
+    A["🗂️ Load Dataset<br/>Maternal Health Risk Data Set.csv"] --> B["🧹 Data Preprocessing<br/>• Drop missing values<br/>• Encode target variable"]
+    
+    B --> C["🎯 Feature Selection<br/>Features: Age, SystolicBP, DiastolicBP,<br/>BS, BodyTemp, HeartRate<br/>Target: RiskLevel"]
+    
+    C --> D["⚖️ Compute Class Weights<br/>Handle class imbalance"]
+    
+    D --> E["📊 Data Splitting<br/>80% Train+Val / 20% Test<br/>Then 80% Train / 20% Val"]
+    
+    E --> F["🔢 Create DMatrix Objects<br/>For XGBoost training"]
+    
+    F --> G["🔧 Hyperparameter Tuning<br/>GridSearchCV with 5-fold CV<br/>Optimize: max_depth, learning_rate,<br/>n_estimators, regularization"]
+    
+    G --> H["🚀 Train Best Model<br/>XGBoost with early stopping<br/>on validation set"]
+    
+    H --> I["📈 Model Evaluation<br/>Calculate accuracy per iteration<br/>for training and validation"]
+    
+    I --> J["🎪 Test Set Prediction<br/>Using best iteration"]
+    
+    J --> K["📊 Performance Metrics<br/>• Accuracy Score<br/>• Classification Report<br/>• Confusion Matrix"]
+    
+    K --> L["📈 Create Visualizations<br/>1️⃣ Feature Importance Chart<br/>2️⃣ Risk Distribution Pie Chart<br/>3️⃣ Confusion Matrix Heatmap<br/>4️⃣ Accuracy Line Graph<br/>5️⃣ Log Loss Graph"]
+    
+    L --> M["✅ Cross-Validation<br/>5-fold CV with f1-weighted scoring"]
+    
+    M --> N["💾 Save Model & Encoder<br/>• maternal_risk_model_improved.pkl<br/>• label_encoder.pkl"]
+    
+    N --> O["🔮 Create Prediction Function<br/>predict_maternal_risk function"]
+    
+    O --> P["🧪 Example Prediction<br/>Test with sample data"]
+    
+    style A fill:#FF6B6B,stroke:#333,stroke-width:2px,color:#fff
+    style B fill:#4ECDC4,stroke:#333,stroke-width:2px,color:#fff
+    style C fill:#45B7D1,stroke:#333,stroke-width:2px,color:#fff
+    style D fill:#96CEB4,stroke:#333,stroke-width:2px,color:#fff
+    style E fill:#FECA57,stroke:#333,stroke-width:2px,color:#333
+    style F fill:#FF9FF3,stroke:#333,stroke-width:2px,color:#fff
+    style G fill:#54A0FF,stroke:#333,stroke-width:2px,color:#fff
+    style H fill:#5F27CD,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#00D2D3,stroke:#333,stroke-width:2px,color:#fff
+    style J fill:#FF9F43,stroke:#333,stroke-width:2px,color:#fff
+    style K fill:#EE5A24,stroke:#333,stroke-width:2px,color:#fff
+    style L fill:#0984E3,stroke:#333,stroke-width:2px,color:#fff
+    style M fill:#6C5CE7,stroke:#333,stroke-width:2px,color:#fff
+    style N fill:#A29BFE,stroke:#333,stroke-width:2px,color:#fff
+    style O fill:#FD79A8,stroke:#333,stroke-width:2px,color:#fff
+    style P fill:#FDCB6E,stroke:#333,stroke-width:2px,color:#333
+```
+
 ## Overview
 
 The script leverages the following libraries:
