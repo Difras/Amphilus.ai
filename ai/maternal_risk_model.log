@@ -1,0 +1,8 @@
+2025-06-21 14:42:47,803 - INFO - Loaded dataset with 1014 rows
+2025-06-21 14:42:47,814 - INFO - Encoded target variable: ['high risk' 'low risk' 'mid risk']
+2025-06-21 14:42:56,517 - INFO - Best parameters: {'colsample_bytree': 0.8, 'learning_rate': 0.1, 'max_depth': 7, 'n_estimators': 200, 'subsample': 0.8}
+2025-06-21 14:42:56,517 - INFO - Best CV accuracy: 0.8225
+2025-06-21 14:42:57,726 - INFO - Cross-validation scores: [0.78527607 0.78395062 0.85185185 0.86419753 0.80864198] (mean: 0.8188)
+2025-06-21 14:42:57,729 - INFO - Test set accuracy: 0.8177
+2025-06-21 14:43:06,506 - ERROR - Visualization failed: xgboost.sklearn.XGBClassifier() got multiple values for keyword argument 'n_estimators'
+2025-06-21 14:43:06,506 - ERROR - Main pipeline failed: xgboost.sklearn.XGBClassifier() got multiple values for keyword argument 'n_estimators'

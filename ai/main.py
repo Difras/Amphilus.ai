@@ -1,191 +1,262 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-from xgboost import XGBClassifier, DMatrix, train
+from xgboost import XGBClassifier
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.utils.class_weight import compute_class_weight
+import plotly.express as px
+import plotly.graph_objects as go
+import shap
+import logging
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
-# Loading and preprocessing the dataset
-data = pd.read_csv('Maternal Health Risk Data Set.csv')
-data = data.dropna()
-
-# Encoding the target variable
-label_encoder = LabelEncoder()
-data['RiskLevel'] = label_encoder.fit_transform(data['RiskLevel'])
-
-# Defining features and target
-X = data[['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']]
-y = data['RiskLevel']
-
-# Compute class weights to handle imbalance (optional)
-class_weights = compute_class_weight('balanced', classes=np.unique(y), y=y)
-class_weight_dict = dict(enumerate(class_weights))
-
-# Splitting the dataset
-X_train_val, X_test, y_train_val, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=0.2, random_state=42)
-
-# Prepare DMatrix for xgboost.train with feature names as a list of strings
-dtrain = DMatrix(X_train, label=y_train, feature_names=list(X.columns))
-dval = DMatrix(X_val, label=y_val, feature_names=list(X.columns))
-dtest = DMatrix(X_test, label=y_test, feature_names=list(X.columns))
-
-# Hyperparameter tuning with GridSearchCV
-param_grid = {
-    'max_depth': [3, 5, 7],
-    'learning_rate': [0.01, 0.1, 0.2],
-    'n_estimators': [50, 75, 100],
-    'reg_lambda': [1, 5, 10],
-    'reg_alpha': [0, 1, 5],
-    'subsample': [0.8],
-    'colsample_bytree': [0.8]
-}
-model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-grid_search = GridSearchCV(model, param_grid, cv=5, scoring='f1_weighted', n_jobs=-1)
-grid_search.fit(X_train_val, y_train_val)  # Removed early_stopping_rounds
-print("Best Parameters:", grid_search.best_params_)
-
-# Use best parameters for training with xgboost.train with early stopping
-best_params = grid_search.best_params_
-evals_result = {}
-best_model = train(
-    params={**best_params, 'objective': 'multi:softprob', 'num_class': len(np.unique(y))},
-    dtrain=dtrain,
-    num_boost_round=best_params['n_estimators'],
-    evals=[(dtrain, 'train'), (dval, 'val')],
-    early_stopping_rounds=10,
-    evals_result=evals_result,
-    verbose_eval=False
+# Set up logging
+logging.basicConfig(
+    filename="maternal_risk_model.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
+logger = logging.getLogger(__name__)
 
-# Use best_iteration for final predictions
-best_iteration = best_model.best_iteration + 1  # +1 because best_iteration is 0-based
-print(f"Best number of iterations: {best_iteration}")
+class MaternalRiskModel:
+    def __init__(self, model_path="maternal_risk_model.pkl", encoder_path="label_encoder.pkl", scaler_path="scaler.pkl"):
+        """Initialize model with paths for saving/loading artifacts."""
+        self.model_path = model_path
+        self.encoder_path = encoder_path
+        self.scaler_path = scaler_path
+        self.model = None
+        self.label_encoder = None
+        self.scaler = None
+        self.feature_names = ['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']
 
-# Extract evaluation results
-epochs = len(evals_result['train']['mlogloss'])
-x_axis = range(1, epochs + 1)
+    def preprocess_data(self, data_path):
+        """Load and preprocess dataset."""
+        try:
+            data = pd.read_csv(data_path)
+            logger.info("Loaded dataset with %d rows", len(data))
 
-# Calculate accuracy for each iteration using a single trained model
-model_iter = train(
-    params={**best_params, 'objective': 'multi:softprob', 'num_class': len(np.unique(y))},
-    dtrain=dtrain,
-    num_boost_round=epochs,
-    evals=[(dtrain, 'train'), (dval, 'val')],
-    early_stopping_rounds=10,
-    evals_result={},
-    verbose_eval=False
-)
-train_accuracy = []
-val_accuracy = []
-for i in range(epochs):
-    train_pred = model_iter.predict(dtrain, iteration_range=(0, i + 1))
-    val_pred = model_iter.predict(dval, iteration_range=(0, i + 1))
-    train_accuracy.append(accuracy_score(y_train, np.argmax(train_pred, axis=1)))
-    val_accuracy.append(accuracy_score(y_val, np.argmax(val_pred, axis=1)))
+            # Handle missing values
+            data = data.dropna()
+            if data.empty:
+                raise ValueError("Dataset is empty after dropping missing values.")
 
-# Predictions on test set using best_iteration
-y_pred = best_model.predict(dtest, iteration_range=(0, best_iteration))
-y_pred_labels = np.argmax(y_pred, axis=1)
+            # Outlier detection and capping
+            for col in self.feature_names:
+                q1 = data[col].quantile(0.01)
+                q99 = data[col].quantile(0.99)
+                data[col] = data[col].clip(q1, q99)
 
-# Evaluating the model
-accuracy = accuracy_score(y_test, y_pred_labels)
-print("\nTest Set Accuracy:", accuracy)
-print("\nClassification Report:\n", classification_report(y_test, y_pred_labels, target_names=label_encoder.classes_))
+            # Encode target variable
+            self.label_encoder = LabelEncoder()
+            data['RiskLevel'] = self.label_encoder.fit_transform(data['RiskLevel'])
+            logger.info("Encoded target variable: %s", self.label_encoder.classes_)
 
-# Visualization 1: Feature Importance Bar Chart
-plt.figure(figsize=(10, 6))
-features = X.columns
-importances = best_model.get_score(importance_type='weight')
-importances = [importances.get(f'f{i}', 0) for i in range(len(features))]  # Map feature indices to names
-plt.bar(features, importances, color=['#36A2EB', '#FF6384', '#4BC0C0', '#FFCE56', '#9966FF', '#FF9F40'])
-plt.xlabel('Features')
-plt.ylabel('Importance Score')
-plt.title('Feature Importance in Maternal Risk Prediction Model')
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.savefig('feature_importance.png')
-plt.close()
+            # Feature engineering
+            data['BP_Difference'] = data['SystolicBP'] - data['DiastolicBP']
+            data['Age_BS_Interaction'] = data['Age'] * data['BS']
+            self.feature_names.extend(['BP_Difference', 'Age_BS_Interaction'])
 
-# Visualization 2: Pie Chart for Risk Level Distribution
-risk_counts = data['RiskLevel'].value_counts()
-risk_labels = [label_encoder.classes_[i] for i in risk_counts.index]
-plt.figure(figsize=(8, 8))
-plt.pie(risk_counts, labels=risk_labels, autopct='%1.1f%%', colors=['#FF6384', '#FFCE56', '#4BC0C0'])
-plt.title('Distribution of Maternal Health Risk Levels')
-plt.tight_layout()
-plt.savefig('risk_distribution.png')
-plt.close()
+            # Split features and target
+            X = data[self.feature_names]
+            y = data['RiskLevel']
 
-# Visualization 3: Confusion Matrix Heatmap
-cm = confusion_matrix(y_test, y_pred_labels)
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
-plt.xlabel('Predicted')
-plt.ylabel('Actual')
-plt.title('Confusion Matrix for Maternal Risk Prediction')
-plt.tight_layout()
-plt.savefig('confusion_matrix.png')
-plt.close()
+            # Scale features
+            self.scaler = StandardScaler()
+            X_scaled = self.scaler.fit_transform(X)
 
-# Visualization 4: Line Graph for Training and Validation Accuracy
-plt.figure(figsize=(10, 6))
-plt.plot(x_axis, train_accuracy, label='Training Accuracy', color='#36A2EB', marker='o')
-plt.plot(x_axis, val_accuracy, label='Validation Accuracy', color='#FF6384', marker='o')
-plt.xlabel('Training Iteration')
-plt.ylabel('Accuracy')
-plt.title('Training and Validation Accuracy Over Iterations')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig('accuracy_line_graph.png')
-plt.close()
+            return X_scaled, y, data
+        except Exception as e:
+            logger.error("Preprocessing failed: %s", str(e))
+            raise
 
-# Visualization 5: Log Loss Graph
-plt.figure(figsize=(10, 6))
-plt.plot(x_axis, evals_result['train']['mlogloss'], label='Training Log Loss', color='#36A2EB')
-plt.plot(x_axis, evals_result['val']['mlogloss'], label='Validation Log Loss', color='#FF6384')
-plt.xlabel('Training Iteration')
-plt.ylabel('Log Loss')
-plt.title('Training and Validation Log Loss Over Iterations')
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig('log_loss_graph.png')
-plt.close()
+    def train_model(self, X, y):
+        """Train XGBoost model with hyperparameter tuning and cross-validation."""
+        try:
+            # Split data
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            X_train_sub, X_val, y_train_sub, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
 
-# Cross-validation score
-model_cv = XGBClassifier(**best_params, use_label_encoder=False, eval_metric='mlogloss')
-cv_scores = cross_val_score(model_cv, X, y, cv=5, scoring='f1_weighted')
-print("\nCross-Validation f1-weighted Scores:", cv_scores)
-print("Mean CV f1-weighted Score:", cv_scores.mean())
-print("Standard Deviation of CV f1-weighted Score:", cv_scores.std())
+            # Define model
+            base_model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
 
-# Saving the model and label encoder
-joblib.dump(best_model, 'maternal_risk_model_improved.pkl')
-joblib.dump(label_encoder, 'label_encoder.pkl')
+            # Hyperparameter tuning
+            param_grid = {
+                'n_estimators': [100, 200],
+                'max_depth': [3, 5, 7],
+                'learning_rate': [0.01, 0.1],
+                'subsample': [0.8, 1.0],
+                'colsample_bytree': [0.8, 1.0]
+            }
+            grid_search = GridSearchCV(base_model, param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+            grid_search.fit(X_train, y_train)
+            self.model = grid_search.best_estimator_
+            logger.info("Best parameters: %s", grid_search.best_params_)
+            logger.info("Best CV accuracy: %.4f", grid_search.best_score_)
 
-# Function to predict risk level for new data
-def predict_maternal_risk(age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate):
-    input_data = DMatrix(pd.DataFrame({
-        'Age': [age],
-        'SystolicBP': [systolic_bp],
-        'DiastolicBP': [diastolic_bp],
-        'BS': [bs],
-        'BodyTemp': [body_temp],
-        'HeartRate': [heart_rate]
-    }), feature_names=list(X.columns))
-    prediction = best_model.predict(input_data, iteration_range=(0, best_iteration))
-    predicted_risk = label_encoder.inverse_transform(np.argmax(prediction, axis=1))[0]
-    return predicted_risk
+            # Train final model
+            eval_set = [(X_train_sub, y_train_sub), (X_val, y_val)]
+            self.model.fit(X_train_sub, y_train_sub, eval_set=eval_set, verbose=False)
 
-# Example prediction
-example = predict_maternal_risk(25, 130, 80, 15, 98, 86)
-print("\nExample Prediction for Age=25, SystolicBP=130, DiastolicBP=80, BS=15, BodyTemp=98, HeartRate=86:")
-print(f"Predicted Risk Level: {example}")
+            # Cross-validation
+            cv_scores = cross_val_score(self.model, X_train, y_train, cv=5, scoring='accuracy')
+            logger.info("Cross-validation scores: %s (mean: %.4f)", cv_scores, cv_scores.mean())
 
-# Note: Visualizations are saved as 'feature_importance.png', 'risk_distribution.png', 'confusion_matrix.png', 'accuracy_line_graph.png', and 'log_loss_graph.png'
+            # Evaluate on test set
+            y_pred = self.model.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+            logger.info("Test set accuracy: %.4f", accuracy)
+            print("Test Set Accuracy:", accuracy)
+            print("\nClassification Report:\n", classification_report(y_test, y_pred, target_names=self.label_encoder.classes_))
+
+            return X_train_sub, y_train_sub, X_val, y_val, X_test, y_test
+        except Exception as e:
+            logger.error("Training failed: %s", str(e))
+            raise
+
+    def visualize_results(self, X_train, y_train, X_val, y_val, X_test, y_test, data):
+        """Generate visualizations."""
+        try:
+            # Feature Importance (Interactive Plotly Bar)
+            fig = px.bar(
+                x=self.model.feature_importances_,
+                y=self.feature_names,
+                title='Feature Importance in Maternal Risk Prediction',
+                labels={'x': 'Importance Score', 'y': 'Features'},
+                color=self.feature_names,
+                color_discrete_sequence=px.colors.qualitative.Bold
+            )
+            fig.update_layout(xaxis_title="Importance Score", yaxis_title="Features")
+            fig.write_html('feature_importance.html')
+
+            # Risk Distribution (Interactive Plotly Pie)
+            risk_counts = data['RiskLevel'].value_counts()
+            risk_labels = [self.label_encoder.classes_[i] for i in risk_counts.index]
+            fig = px.pie(
+                values=risk_counts,
+                names=risk_labels,
+                title='Distribution of Maternal Health Risk Levels',
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            fig.write_html('risk_distribution.html')
+
+            # Confusion Matrix (Seaborn Heatmap)
+            cm = confusion_matrix(y_test, self.model.predict(X_test))
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=self.label_encoder.classes_, yticklabels=self.label_encoder.classes_)
+            plt.xlabel('Predicted')
+            plt.ylabel('Actual')
+            plt.title('Confusion Matrix')
+            plt.tight_layout()
+            plt.savefig('confusion_matrix.png')
+            plt.close()
+
+            # Training and Validation Accuracy (Interactive Plotly Line)
+            evals_result = self.model.evals_result()
+            epochs = len(evals_result['validation_0']['mlogloss'])
+            x_axis = list(range(1, epochs + 1))
+            train_accuracy = []
+            val_accuracy = []
+            for i in range(epochs):
+                temp_model = XGBClassifier(**self.model.get_params(), n_estimators=i + 1)
+                temp_model.fit(X_train, y_train, verbose=False)
+                train_accuracy.append(accuracy_score(y_train, temp_model.predict(X_train)))
+                val_accuracy.append(accuracy_score(y_val, temp_model.predict(X_val)))
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=x_axis, y=train_accuracy, mode='lines+markers', name='Training Accuracy', line=dict(color='#36A2EB')))
+            fig.add_trace(go.Scatter(x=x_axis, y=val_accuracy, mode='lines+markers', name='Validation Accuracy', line=dict(color='#FF6384')))
+            fig.update_layout(
+                title='Training and Validation Accuracy Over Iterations',
+                xaxis_title='Training Iteration',
+                yaxis_title='Accuracy',
+                showlegend=True,
+                grid=dict(xaxis=dict(visible=True), yaxis=dict(visible=True))
+            )
+            fig.write_html('accuracy_line_graph.html')
+
+            # SHAP Summary Plot
+            explainer = shap.TreeExplainer(self.model)
+            shap_values = explainer.shap_values(X_test)
+            plt.figure(figsize=(10, 6))
+            shap.summary_plot(shap_values, X_test, feature_names=self.feature_names, show=False)
+            plt.tight_layout()
+            plt.savefig('shap_summary.png')
+            plt.close()
+            logger.info("Generated visualizations: feature_importance.html, risk_distribution.html, confusion_matrix.png, accuracy_line_graph.html, shap_summary.png")
+        except Exception as e:
+            logger.error("Visualization failed: %s", str(e))
+            raise
+
+    def save_artifacts(self):
+        """Save model, encoder, and scaler."""
+        try:
+            joblib.dump(self.model, self.model_path)
+            joblib.dump(self.label_encoder, self.encoder_path)
+            joblib.dump(self.scaler, self.scaler_path)
+            logger.info("Saved artifacts: %s, %s, %s", self.model_path, self.encoder_path, self.scaler_path)
+        except Exception as e:
+            logger.error("Saving artifacts failed: %s", str(e))
+            raise
+
+    def predict_risk(self, age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate):
+        """Predict risk level for new data with input validation."""
+        try:
+            # Input validation
+            inputs = {
+                'Age': (age, 10, 100),
+                'SystolicBP': (systolic_bp, 50, 200),
+                'DiastolicBP': (diastolic_bp, 30, 150),
+                'BS': (bs, 0, 50),
+                'BodyTemp': (body_temp, 90, 110),
+                'HeartRate': (heart_rate, 40, 120)
+            }
+            for name, (value, min_val, max_val) in inputs.items():
+                if not isinstance(value, (int, float)) or value < min_val or value > max_val:
+                    raise ValueError(f"{name} must be a number between {min_val} and {max_val}")
+
+            # Create input DataFrame
+            input_data = pd.DataFrame({
+                'Age': [age],
+                'SystolicBP': [systolic_bp],
+                'DiastolicBP': [diastolic_bp],
+                'BS': [bs],
+                'BodyTemp': [body_temp],
+                'HeartRate': [heart_rate],
+                'BP_Difference': [systolic_bp - diastolic_bp],
+                'Age_BS_Interaction': [age * bs]
+            })
+
+            # Scale input
+            input_scaled = self.scaler.transform(input_data)
+
+            # Predict
+            prediction = self.model.predict(input_scaled)
+            predicted_risk = self.label_encoder.inverse_transform(prediction)[0]
+            logger.info("Prediction for input %s: %s", input_data.to_dict(), predicted_risk)
+            return predicted_risk
+        except Exception as e:
+            logger.error("Prediction failed: %s", str(e))
+            raise
+
+def main():
+    """Main function to run the model pipeline."""
+    try:
+        model = MaternalRiskModel()
+        X, y, data = model.preprocess_data('Maternal Health Risk Data Set.csv')
+        X_train, y_train, X_val, y_val, X_test, y_test = model.train_model(X, y)
+        model.visualize_results(X_train, y_train, X_val, y_val, X_test, y_test, data)
+        model.save_artifacts()
+
+        # Example prediction
+        example = model.predict_risk(25, 130, 80, 15, 98, 86)
+        print("\nExample Prediction:")
+        print(f"Predicted Risk Level: {example}")
+    except Exception as e:
+        logger.error("Main pipeline failed: %s", str(e))
+        print(f"Error: {str(e)}")
+
+if __name__ == "__main__":
+    main()
