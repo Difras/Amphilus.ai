@@ -10,52 +10,52 @@ The following flowchart illustrates the complete machine learning pipeline used 
 
 ```mermaid
 flowchart TD
-    A["🗂️ Load Dataset<br/>Maternal Health Risk Data Set.csv"] --> B["🧹 Data Preprocessing<br/>• Drop missing values<br/>• Encode target variable"]
+    A["Load Dataset<br/>Maternal Health Risk Data Set.csv"] --> B["Data Preprocessing<br/>Drop missing values<br/>Encode target variable"]
     
-    B --> C["🎯 Feature Selection<br/>Features: Age, SystolicBP, DiastolicBP,<br/>BS, BodyTemp, HeartRate<br/>Target: RiskLevel"]
+    B --> C["Feature Selection<br/>Features: Age, SystolicBP, DiastolicBP,<br/>BS, BodyTemp, HeartRate<br/>Target: RiskLevel"]
     
-    C --> D["⚖️ Compute Class Weights<br/>Handle class imbalance"]
+    C --> D["Compute Class Weights<br/>Handle class imbalance"]
     
-    D --> E["📊 Data Splitting<br/>80% Train+Val / 20% Test<br/>Then 80% Train / 20% Val"]
+    D --> E["Data Splitting<br/>80% Train+Val / 20% Test<br/>Then 80% Train / 20% Val"]
     
-    E --> F["🔢 Create DMatrix Objects<br/>For XGBoost training"]
+    E --> F["Create DMatrix Objects<br/>For XGBoost training"]
     
-    F --> G["🔧 Hyperparameter Tuning<br/>GridSearchCV with 5-fold CV<br/>Optimize: max_depth, learning_rate,<br/>n_estimators, regularization"]
+    F --> G["Hyperparameter Tuning<br/>GridSearchCV with 5-fold CV<br/>Optimize: max_depth, learning_rate,<br/>n_estimators, regularization"]
     
-    G --> H["🚀 Train Best Model<br/>XGBoost with early stopping<br/>on validation set"]
+    G --> H["Train Best Model<br/>XGBoost with early stopping<br/>on validation set"]
     
-    H --> I["📈 Model Evaluation<br/>Calculate accuracy per iteration<br/>for training and validation"]
+    H --> I["Model Evaluation<br/>Calculate accuracy per iteration<br/>for training and validation"]
     
-    I --> J["🎪 Test Set Prediction<br/>Using best iteration"]
+    I --> J["Test Set Prediction<br/>Using best iteration"]
     
-    J --> K["📊 Performance Metrics<br/>• Accuracy Score<br/>• Classification Report<br/>• Confusion Matrix"]
+    J --> K["Performance Metrics<br/>Accuracy Score<br/>Classification Report<br/>Confusion Matrix"]
     
-    K --> L["📈 Create Visualizations<br/>1️⃣ Feature Importance Chart<br/>2️⃣ Risk Distribution Pie Chart<br/>3️⃣ Confusion Matrix Heatmap<br/>4️⃣ Accuracy Line Graph<br/>5️⃣ Log Loss Graph"]
+    K --> L["Create Visualizations<br/>Feature Importance Chart<br/>Risk Distribution Pie Chart<br/>Confusion Matrix Heatmap<br/>Accuracy Line Graph<br/>Log Loss Graph"]
     
-    L --> M["✅ Cross-Validation<br/>5-fold CV with f1-weighted scoring"]
+    L --> M["Cross-Validation<br/>5-fold CV with f1-weighted scoring"]
     
-    M --> N["💾 Save Model & Encoder<br/>• maternal_risk_model_improved.pkl<br/>• label_encoder.pkl"]
+    M --> N["Save Model and Encoder<br/>maternal_risk_model_improved.pkl<br/>label_encoder.pkl"]
     
-    N --> O["🔮 Create Prediction Function<br/>predict_maternal_risk function"]
+    N --> O["Create Prediction Function<br/>predict_maternal_risk function"]
     
-    O --> P["🧪 Example Prediction<br/>Test with sample data"]
+    O --> P["Example Prediction<br/>Test with sample data"]
     
-    style A fill:#FF6B6B,stroke:#333,stroke-width:2px,color:#fff
-    style B fill:#4ECDC4,stroke:#333,stroke-width:2px,color:#fff
-    style C fill:#45B7D1,stroke:#333,stroke-width:2px,color:#fff
-    style D fill:#96CEB4,stroke:#333,stroke-width:2px,color:#fff
-    style E fill:#FECA57,stroke:#333,stroke-width:2px,color:#333
-    style F fill:#FF9FF3,stroke:#333,stroke-width:2px,color:#fff
-    style G fill:#54A0FF,stroke:#333,stroke-width:2px,color:#fff
-    style H fill:#5F27CD,stroke:#333,stroke-width:2px,color:#fff
-    style I fill:#00D2D3,stroke:#333,stroke-width:2px,color:#fff
-    style J fill:#FF9F43,stroke:#333,stroke-width:2px,color:#fff
-    style K fill:#EE5A24,stroke:#333,stroke-width:2px,color:#fff
-    style L fill:#0984E3,stroke:#333,stroke-width:2px,color:#fff
-    style M fill:#6C5CE7,stroke:#333,stroke-width:2px,color:#fff
-    style N fill:#A29BFE,stroke:#333,stroke-width:2px,color:#fff
-    style O fill:#FD79A8,stroke:#333,stroke-width:2px,color:#fff
-    style P fill:#FDCB6E,stroke:#333,stroke-width:2px,color:#333
+    style A fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style B fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style C fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style D fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style E fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style F fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style G fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style H fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style I fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style J fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style K fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style L fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style M fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style N fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style O fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
+    style P fill:#000000,stroke:#000000,stroke-width:3px,color:#ffffff
 ```
 
 ## Overview
