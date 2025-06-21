@@ -1,21 +1,19 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-from xgboost import XGBClassifier
+from xgboost import XGBClassifier, DMatrix, train
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score
+from sklearn.utils.class_weight import compute_class_weight
 
 # Loading and preprocessing the dataset
 data = pd.read_csv('Maternal Health Risk Data Set.csv')
-
-# Handling missing values (if any)
 data = data.dropna()
 
-# Encoding the target variable (RiskLevel: high risk, mid risk, low risk)
+# Encoding the target variable
 label_encoder = LabelEncoder()
 data['RiskLevel'] = label_encoder.fit_transform(data['RiskLevel'])
 
@@ -23,52 +21,87 @@ data['RiskLevel'] = label_encoder.fit_transform(data['RiskLevel'])
 X = data[['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']]
 y = data['RiskLevel']
 
-# Splitting the dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Compute class weights to handle imbalance (optional)
+class_weights = compute_class_weight('balanced', classes=np.unique(y), y=y)
+class_weight_dict = dict(enumerate(class_weights))
 
-# Further split training set into training and validation sets for tracking accuracy
-X_train_sub, X_val, y_train_sub, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+# Splitting the dataset
+X_train_val, X_test, y_train_val, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=0.2, random_state=42)
 
-# Initializing the XGBoost model
+# Prepare DMatrix for xgboost.train with feature names as a list of strings
+dtrain = DMatrix(X_train, label=y_train, feature_names=list(X.columns))
+dval = DMatrix(X_val, label=y_val, feature_names=list(X.columns))
+dtest = DMatrix(X_test, label=y_test, feature_names=list(X.columns))
+
+# Hyperparameter tuning with GridSearchCV
+param_grid = {
+    'max_depth': [3, 5, 7],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'n_estimators': [50, 75, 100],
+    'reg_lambda': [1, 5, 10],
+    'reg_alpha': [0, 1, 5],
+    'subsample': [0.8],
+    'colsample_bytree': [0.8]
+}
 model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+grid_search = GridSearchCV(model, param_grid, cv=5, scoring='f1_weighted', n_jobs=-1)
+grid_search.fit(X_train_val, y_train_val)  # Removed early_stopping_rounds
+print("Best Parameters:", grid_search.best_params_)
 
-# Training the model with evaluation sets to track accuracy
-eval_set = [(X_train_sub, y_train_sub), (X_val, y_val)]
-model.fit(X_train_sub, y_train_sub, eval_set=eval_set, verbose=False)
+# Use best parameters for training with xgboost.train with early stopping
+best_params = grid_search.best_params_
+evals_result = {}
+best_model = train(
+    params={**best_params, 'objective': 'multi:softprob', 'num_class': len(np.unique(y))},
+    dtrain=dtrain,
+    num_boost_round=best_params['n_estimators'],
+    evals=[(dtrain, 'train'), (dval, 'val')],
+    early_stopping_rounds=10,
+    evals_result=evals_result,
+    verbose_eval=False
+)
 
-# Extracting log loss from evaluation results (XGBoost doesn't track accuracy directly)
-evals_result = model.evals_result()
-epochs = len(evals_result['validation_0']['mlogloss'])
+# Use best_iteration for final predictions
+best_iteration = best_model.best_iteration + 1  # +1 because best_iteration is 0-based
+print(f"Best number of iterations: {best_iteration}")
+
+# Extract evaluation results
+epochs = len(evals_result['train']['mlogloss'])
 x_axis = range(1, epochs + 1)
 
-# Calculating accuracy for each iteration
+# Calculate accuracy for each iteration using a single trained model
+model_iter = train(
+    params={**best_params, 'objective': 'multi:softprob', 'num_class': len(np.unique(y))},
+    dtrain=dtrain,
+    num_boost_round=epochs,
+    evals=[(dtrain, 'train'), (dval, 'val')],
+    early_stopping_rounds=10,
+    evals_result={},
+    verbose_eval=False
+)
 train_accuracy = []
 val_accuracy = []
 for i in range(epochs):
-    # Predict on training and validation sets for each iteration
-    model.set_params(n_estimators=i + 1)
-    model.fit(X_train_sub, y_train_sub, eval_set=eval_set, verbose=False)
-    train_pred = model.predict(X_train_sub)
-    val_pred = model.predict(X_val)
-    train_accuracy.append(accuracy_score(y_train_sub, train_pred))
-    val_accuracy.append(accuracy_score(y_val, val_pred))
+    train_pred = model_iter.predict(dtrain, iteration_range=(0, i + 1))
+    val_pred = model_iter.predict(dval, iteration_range=(0, i + 1))
+    train_accuracy.append(accuracy_score(y_train, np.argmax(train_pred, axis=1)))
+    val_accuracy.append(accuracy_score(y_val, np.argmax(val_pred, axis=1)))
 
-# Retrain the model on the full training set for final predictions
-model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-model.fit(X_train, y_train)
-
-# Making predictions on the test set
-y_pred = model.predict(X_test)
+# Predictions on test set using best_iteration
+y_pred = best_model.predict(dtest, iteration_range=(0, best_iteration))
+y_pred_labels = np.argmax(y_pred, axis=1)
 
 # Evaluating the model
-accuracy = accuracy_score(y_test, y_pred)
-print("Test Set Accuracy:", accuracy)
-print("\nClassification Report:\n", classification_report(y_test, y_pred, target_names=label_encoder.classes_))
+accuracy = accuracy_score(y_test, y_pred_labels)
+print("\nTest Set Accuracy:", accuracy)
+print("\nClassification Report:\n", classification_report(y_test, y_pred_labels, target_names=label_encoder.classes_))
 
 # Visualization 1: Feature Importance Bar Chart
 plt.figure(figsize=(10, 6))
 features = X.columns
-importances = model.feature_importances_
+importances = best_model.get_score(importance_type='weight')
+importances = [importances.get(f'f{i}', 0) for i in range(len(features))]  # Map feature indices to names
 plt.bar(features, importances, color=['#36A2EB', '#FF6384', '#4BC0C0', '#FFCE56', '#9966FF', '#FF9F40'])
 plt.xlabel('Features')
 plt.ylabel('Importance Score')
@@ -89,7 +122,7 @@ plt.savefig('risk_distribution.png')
 plt.close()
 
 # Visualization 3: Confusion Matrix Heatmap
-cm = confusion_matrix(y_test, y_pred)
+cm = confusion_matrix(y_test, y_pred_labels)
 plt.figure(figsize=(8, 6))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
 plt.xlabel('Predicted')
@@ -112,22 +145,42 @@ plt.tight_layout()
 plt.savefig('accuracy_line_graph.png')
 plt.close()
 
+# Visualization 5: Log Loss Graph
+plt.figure(figsize=(10, 6))
+plt.plot(x_axis, evals_result['train']['mlogloss'], label='Training Log Loss', color='#36A2EB')
+plt.plot(x_axis, evals_result['val']['mlogloss'], label='Validation Log Loss', color='#FF6384')
+plt.xlabel('Training Iteration')
+plt.ylabel('Log Loss')
+plt.title('Training and Validation Log Loss Over Iterations')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('log_loss_graph.png')
+plt.close()
+
+# Cross-validation score
+model_cv = XGBClassifier(**best_params, use_label_encoder=False, eval_metric='mlogloss')
+cv_scores = cross_val_score(model_cv, X, y, cv=5, scoring='f1_weighted')
+print("\nCross-Validation f1-weighted Scores:", cv_scores)
+print("Mean CV f1-weighted Score:", cv_scores.mean())
+print("Standard Deviation of CV f1-weighted Score:", cv_scores.std())
+
 # Saving the model and label encoder
-joblib.dump(model, 'maternal_risk_model.pkl')
+joblib.dump(best_model, 'maternal_risk_model_improved.pkl')
 joblib.dump(label_encoder, 'label_encoder.pkl')
 
 # Function to predict risk level for new data
 def predict_maternal_risk(age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate):
-    input_data = pd.DataFrame({
+    input_data = DMatrix(pd.DataFrame({
         'Age': [age],
         'SystolicBP': [systolic_bp],
         'DiastolicBP': [diastolic_bp],
         'BS': [bs],
         'BodyTemp': [body_temp],
         'HeartRate': [heart_rate]
-    })
-    prediction = model.predict(input_data)
-    predicted_risk = label_encoder.inverse_transform(prediction)[0]
+    }), feature_names=list(X.columns))
+    prediction = best_model.predict(input_data, iteration_range=(0, best_iteration))
+    predicted_risk = label_encoder.inverse_transform(np.argmax(prediction, axis=1))[0]
     return predicted_risk
 
 # Example prediction
@@ -135,4 +188,4 @@ example = predict_maternal_risk(25, 130, 80, 15, 98, 86)
 print("\nExample Prediction for Age=25, SystolicBP=130, DiastolicBP=80, BS=15, BodyTemp=98, HeartRate=86:")
 print(f"Predicted Risk Level: {example}")
 
-# Note: Visualizations are saved as 'feature_importance.png', 'risk_distribution.png', 'confusion_matrix.png', and 'accuracy_line_graph.png'
+# Note: Visualizations are saved as 'feature_importance.png', 'risk_distribution.png', 'confusion_matrix.png', 'accuracy_line_graph.png', and 'log_loss_graph.png'
