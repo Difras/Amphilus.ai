@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "imbalanced-learn>=0.12.4",
+    "jax>=0.6.2",
     "joblib>=1.5.1",
     "matplotlib>=3.10.3",
     "pandas>=2.3.0",
