@@ -1,138 +1,156 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
-from xgboost import XGBClassifier
-import joblib
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score
+import pickle
+import os
 
-# Loading and preprocessing the dataset
-data = pd.read_csv('Maternal Health Risk Data Set.csv')
+# Loading and preprocessing maternal health dataset
+maternal_data = pd.read_csv('Maternal Health Risk Data Set.csv')
+maternal_data = maternal_data.dropna()  # Remove any missing values (none expected)
+maternal_features = ['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']
+maternal_data = maternal_data[maternal_features + ['RiskLevel']]
 
-# Handling missing values (if any)
-data = data.dropna()
+# Loading and preprocessing fetal health dataset
+fetal_data = pd.read_csv('fetal_health.csv')
+fetal_data = fetal_data.dropna()  # Remove any missing values (none expected)
+# Select key fetal features to avoid high dimensionality
+fetal_features = [
+    'baseline value', 'accelerations', 'uterine_contractions',
+    'light_decelerations', 'prolongued_decelerations', 'abnormal_short_term_variability'
+]
+# Map fetal_health to RiskLevel categories
+fetal_data['RiskLevel'] = fetal_data['fetal_health'].map({1: 'low risk', 2: 'mid risk', 3: 'high risk'})
+fetal_data = fetal_data[fetal_features + ['RiskLevel']]
 
-# Encoding the target variable (RiskLevel: high risk, mid risk, low risk)
+# Renaming fetal features to avoid conflicts and ensure clarity
+fetal_data.columns = [
+    'FetalHeartRate', 'Accelerations', 'UterineContractions',
+    'LightDecelerations', 'ProlonguedDecelerations', 'AbnormalShortTermVariability', 'RiskLevel'
+]
+
+# Combining datasets
+combined_data = pd.concat([maternal_data, fetal_data], axis=0, ignore_index=True)
+combined_data = combined_data.fillna(0)  # Fill missing features with 0 (e.g., fetal features for maternal rows)
+
+# Encoding the target variable
 label_encoder = LabelEncoder()
-data['RiskLevel'] = label_encoder.fit_transform(data['RiskLevel'])
+combined_data['RiskLevel'] = label_encoder.fit_transform(combined_data['RiskLevel'])
 
 # Defining features and target
-X = data[['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']]
-y = data['RiskLevel']
+features = [
+    'Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate',
+    'FetalHeartRate', 'Accelerations', 'UterineContractions',
+    'LightDecelerations', 'ProlonguedDecelerations', 'AbnormalShortTermVariability'
+]
+X = combined_data[features]
+y = combined_data['RiskLevel']
 
-# Splitting the dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Scaling features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# Further split training set into training and validation sets for tracking accuracy
-X_train_sub, X_val, y_train_sub, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+# Splitting data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
 
-# Initializing the XGBoost model
-model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+# Further splitting training data into sub-training and validation sets
+X_subtrain, X_val, y_subtrain, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42, stratify=y_train)
 
-# Training the model with evaluation sets to track accuracy
-eval_set = [(X_train_sub, y_train_sub), (X_val, y_val)]
-model.fit(X_train_sub, y_train_sub, eval_set=eval_set, verbose=False)
+# Initializing and training the XGBoost model with evaluation
+model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42, n_estimators=100)
+eval_set = [(X_subtrain, y_subtrain), (X_val, y_val)]
+model.fit(X_subtrain, y_subtrain, eval_set=eval_set, verbose=True)
 
-# Extracting log loss from evaluation results (XGBoost doesn't track accuracy directly)
-evals_result = model.evals_result()
-epochs = len(evals_result['validation_0']['mlogloss'])
-x_axis = range(1, epochs + 1)
+# Extracting training and validation accuracy from evaluation results
+results = model.evals_result()
+iterations = range(len(results['validation_0']['mlogloss']))
+train_accuracy = [1 - loss for loss in results['validation_0']['mlogloss']]  # Approximate accuracy from logloss
+val_accuracy = [1 - loss for loss in results['validation_1']['mlogloss']]   # Approximate accuracy from logloss
 
-# Calculating accuracy for each iteration
-train_accuracy = []
-val_accuracy = []
-for i in range(epochs):
-    # Predict on training and validation sets for each iteration
-    model.set_params(n_estimators=i + 1)
-    model.fit(X_train_sub, y_train_sub, eval_set=eval_set, verbose=False)
-    train_pred = model.predict(X_train_sub)
-    val_pred = model.predict(X_val)
-    train_accuracy.append(accuracy_score(y_train_sub, train_pred))
-    val_accuracy.append(accuracy_score(y_val, val_pred))
-
-# Retrain the model on the full training set for final predictions
-model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+# Training final model on full training data
 model.fit(X_train, y_train)
 
-# Making predictions on the test set
+# Evaluating on test set
 y_pred = model.predict(X_test)
+test_accuracy = accuracy_score(y_test, y_pred)
+print(f"Test Accuracy: {test_accuracy:.4f}")
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, target_names=label_encoder.classes_))
 
-# Evaluating the model
-accuracy = accuracy_score(y_test, y_pred)
-print("Test Set Accuracy:", accuracy)
-print("\nClassification Report:\n", classification_report(y_test, y_pred, target_names=label_encoder.classes_))
-
-# Visualization 1: Feature Importance Bar Chart
+# Visualizing feature importance
 plt.figure(figsize=(10, 6))
-features = X.columns
-importances = model.feature_importances_
-plt.bar(features, importances, color=['#36A2EB', '#FF6384', '#4BC0C0', '#FFCE56', '#9966FF', '#FF9F40'])
-plt.xlabel('Features')
-plt.ylabel('Importance Score')
-plt.title('Feature Importance in Maternal Risk Prediction Model')
-plt.xticks(rotation=45)
+xgb.plot_importance(model, importance_type='weight')
+plt.title('Feature Importance')
 plt.tight_layout()
-plt.savefig('feature_importance.png')
+plt.savefig('feature_importance_combined.png')
 plt.close()
 
-# Visualization 2: Pie Chart for Risk Level Distribution
-risk_counts = data['RiskLevel'].value_counts()
-risk_labels = [label_encoder.classes_[i] for i in risk_counts.index]
-plt.figure(figsize=(8, 8))
-plt.pie(risk_counts, labels=risk_labels, autopct='%1.1f%%', colors=['#FF6384', '#FFCE56', '#4BC0C0'])
-plt.title('Distribution of Maternal Health Risk Levels')
-plt.tight_layout()
-plt.savefig('risk_distribution.png')
+# Visualizing risk distribution
+plt.figure(figsize=(8, 6))
+combined_data['RiskLevel'].value_counts().plot(kind='pie', autopct='%1.1f%%', labels=label_encoder.classes_)
+plt.title('Risk Level Distribution')
+plt.ylabel('')
+plt.savefig('risk_distribution_combined.png')
 plt.close()
 
-# Visualization 3: Confusion Matrix Heatmap
+# Visualizing confusion matrix
 cm = confusion_matrix(y_test, y_pred)
 plt.figure(figsize=(8, 6))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
+plt.title('Confusion Matrix')
 plt.xlabel('Predicted')
 plt.ylabel('Actual')
-plt.title('Confusion Matrix for Maternal Risk Prediction')
-plt.tight_layout()
-plt.savefig('confusion_matrix.png')
+plt.savefig('confusion_matrix_combined.png')
 plt.close()
 
-# Visualization 4: Line Graph for Training and Validation Accuracy
+# Visualizing training and validation accuracy
 plt.figure(figsize=(10, 6))
-plt.plot(x_axis, train_accuracy, label='Training Accuracy', color='#36A2EB', marker='o')
-plt.plot(x_axis, val_accuracy, label='Validation Accuracy', color='#FF6384', marker='o')
-plt.xlabel('Training Iteration')
-plt.ylabel('Accuracy')
+plt.plot(iterations, train_accuracy, label='Training Accuracy')
+plt.plot(iterations, val_accuracy, label='Validation Accuracy')
 plt.title('Training and Validation Accuracy Over Iterations')
+plt.xlabel('Iteration')
+plt.ylabel('Accuracy')
 plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.savefig('accuracy_line_graph.png')
+plt.savefig('accuracy_line_graph_combined.png')
 plt.close()
 
-# Saving the model and label encoder
-joblib.dump(model, 'maternal_risk_model.pkl')
-joblib.dump(label_encoder, 'label_encoder.pkl')
+# Saving the model and encoders
+with open('combined_risk_model.pkl', 'wb') as f:
+    pickle.dump(model, f)
+with open('label_encoder_combined.pkl', 'wb') as f:
+    pickle.dump(label_encoder, f)
+with open('scaler_combined.pkl', 'wb') as f:
+    pickle.dump(scaler, f)
 
-# Function to predict risk level for new data
-def predict_maternal_risk(age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate):
-    input_data = pd.DataFrame({
-        'Age': [age],
-        'SystolicBP': [systolic_bp],
-        'DiastolicBP': [diastolic_bp],
-        'BS': [bs],
-        'BodyTemp': [body_temp],
-        'HeartRate': [heart_rate]
-    })
-    prediction = model.predict(input_data)
-    predicted_risk = label_encoder.inverse_transform(prediction)[0]
-    return predicted_risk
+# Defining prediction function
+def predict_combined_risk(age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate,
+                         fetal_heart_rate, accelerations, uterine_contractions,
+                         light_decelerations, prolongued_decelerations, abnormal_short_term_variability):
+    input_data = np.array([[age, systolic_bp, diastolic_bp, bs, body_temp, heart_rate,
+                            fetal_heart_rate, accelerations, uterine_contractions,
+                            light_decelerations, prolongued_decelerations, abnormal_short_term_variability]])
+    input_scaled = scaler.transform(input_data)
+    prediction = model.predict(input_scaled)
+    return label_encoder.inverse_transform(prediction)[0]
 
 # Example prediction
-example = predict_maternal_risk(25, 130, 80, 15, 98, 86)
-print("\nExample Prediction for Age=25, SystolicBP=130, DiastolicBP=80, BS=15, BodyTemp=98, HeartRate=86:")
-print(f"Predicted Risk Level: {example}")
-
-# Note: Visualizations are saved as 'feature_importance.png', 'risk_distribution.png', 'confusion_matrix.png', and 'accuracy_line_graph.png'
+example_input = {
+    'age': 23,
+    'systolic_bp': 140,
+    'diastolic_bp': 80,
+    'bs': 7.01,
+    'body_temp': 98,
+    'heart_rate': 70,
+    'fetal_heart_rate': 120,
+    'accelerations': 0.005,
+    'uterine_contractions': 0.006,
+    'light_decelerations': 0.0,
+    'prolongued_decelerations': 0.0,
+    'abnormal_short_term_variability': 20
+}
+predicted_risk = predict_combined_risk(**example_input)
+print(f"\nPredicted Risk Level for example input: {predicted_risk}")
