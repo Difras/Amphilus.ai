@@ -165,7 +165,7 @@ example_input = {
     'bs': 7.01,
     'body_temp': 98,
     'heart_rate': 70,
-    'fetal_heart_rate': 1200,
+    'fetal_heart_rate': 120,
     'accelerations': 0.005,
     'uterine_contractions': 0.006,
     'light_decelerations': 0.0,
