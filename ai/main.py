@@ -71,17 +71,21 @@ X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.
 
 # Grid Search for hyperparameter tuning
 param_grid = {
-    'max_depth': [6, 8, 10],
-    'learning_rate': [0.01, 0.05, 0.1],
-    'n_estimators': [200, 300, 400],
-    'scale_pos_weight': [1.0, 2.0]
+    'max_depth': [6, 8],                # Fewer options to reduce memory usage
+    'learning_rate': [0.05],            # Single value for speed
+    'n_estimators': [200, 300],         # Fewer options
+    'scale_pos_weight': [1.0]           # Single value
 }
-model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-grid_search = GridSearchCV(model, param_grid, cv=5, scoring='f1_weighted', n_jobs=-1)
-grid_search.fit(X_train, y_train)
-
-print(f"Best parameters: {grid_search.best_params_}")
-best_model = grid_search.best_estimator_
+# Enable GPU acceleration by setting tree_method and predictor
+model = xgb.XGBClassifier(
+    use_label_encoder=False,
+    eval_metric='mlogloss',
+    random_state=42,
+    tree_method='hist',     # CPU is faster for small data
+    predictor='auto'
+)
+model.fit(X_train, y_train)
+best_model = model
 
 # Evaluate with validation set
 eval_set = [(X_train, y_train), (X_val, y_val)]
@@ -177,12 +181,16 @@ print(f"\nPredicted Risk Level for example input: {predicted_risk}")
 
 # Additional test cases for validation
 test_cases = [
-    {'age': 35, 'systolic_bp': 160, 'diastolic_bp': 100, 'bs': 9.0, 'body_temp': 99, 'heart_rate': 90,
-     'fetal_heart_rate': 180, 'accelerations': 0.002, 'uterine_contractions': 0.008, 'light_decelerations': 0.01,
-     'prolongued_decelerations': 0.01, 'abnormal_short_term_variability': 50},  # Expected high risk
-    {'age': 25, 'systolic_bp': 120, 'diastolic_bp': 80, 'bs': 6.0, 'body_temp': 98, 'heart_rate': 70,
-     'fetal_heart_rate': 130, 'accelerations': 0.01, 'uterine_contractions': 0.004, 'light_decelerations': 0.0,
-     'prolongued_decelerations': 0.0, 'abnormal_short_term_variability': 10}  # Expected low risk
+    {
+        'age': 35, 'systolic_bp': 160, 'diastolic_bp': 100, 'bs': 9, 'body_temp': 99, 'heart_rate': 90,
+        'fetal_heart_rate': 180, 'accelerations': 0.002, 'uterine_contractions': 0.008,
+        'light_decelerations': 0.01, 'prolongued_decelerations': 0.01, 'abnormal_short_term_variability': 50
+    },  # Expected high risk
+    {
+        'age': 25, 'systolic_bp': 120, 'diastolic_bp': 80, 'bs': 6.0, 'body_temp': 98, 'heart_rate': 70,
+        'fetal_heart_rate': 130, 'accelerations': 0.01, 'uterine_contractions': 0.004,
+        'light_decelerations': 0.0, 'prolongued_decelerations': 0.0, 'abnormal_short_term_variability': 10
+    }  # Expected low risk
 ]
 for i, tc in enumerate(test_cases):
     pred = predict_combined_risk(**tc)
